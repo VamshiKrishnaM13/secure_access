@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:process_run/shell.dart';
-
+import 'package:wireguard_flutter/model/stats.dart';
 import '../wireguard_flutter_platform_interface.dart';
 
 class WireGuardFlutterLinux extends WireGuardFlutterInterface {
@@ -104,14 +104,60 @@ class WireGuardFlutterLinux extends WireGuardFlutterInterface {
     }
   }
 
-  @override
-  Future<bool> isConnected() async {
-    assert(
-      name != null,
-      'Bad state: not initialized. Call "initialize" before calling this command',
-    );
-    final processResultList = await shell.run('sudo wg');
-    final process = processResultList.first;
-    return process.outLines.any((line) => line.trim() == 'interface: $name');
+  num _parseTransferData(String data) {
+  final units = {
+    'B': 1,
+    'KiB': 1024,
+    'MiB': 1024 * 1024,
+    'GiB': 1024 * 1024 * 1024
+  };
+  final parts = data.split(' ');
+  if (parts.length < 2) return 0;
+  
+  final value = num.tryParse(parts[0]) ?? 0;
+  final unit = parts[1];
+
+  return value * (units[unit] ?? 1);
+}
+
+
+  Future<Stats?> getStats() async {
+  assert(
+    (await isConnected()),
+    'Bad state: vpn has not been started. Call startVpn',
+  );
+
+  final processResultList = await shell.run('sudo wg show $name');
+  final process = processResultList.first;
+  final lines = process.outLines;
+
+  if (lines.isEmpty) return null;
+
+  num totalDownload = 0;
+  num totalUpload = 0;
+
+  print('Raw wg show output: ${process.outLines}'); // Debug print
+
+  for (var line in lines) {
+    if (line.contains('transfer:')) {
+      var transferData = line.split(': ')[1].split(', ');
+      print('Transfer data: $transferData'); // Debug print
+
+      totalDownload += _parseTransferData(transferData[0].trim());
+      totalUpload += _parseTransferData(transferData[1].trim());
+
+      print('Parsed Download: ${_parseTransferData(transferData[0].trim())}'); // Debug print
+      print('Parsed Upload: ${_parseTransferData(transferData[1].trim())}'); // Debug print
+    }
   }
+
+  print('Parsed stats - Download: $totalDownload, Upload: $totalUpload'); // Debug print
+
+  return Stats(
+    totalDownload: totalDownload,
+    totalUpload: totalUpload,
+    // lastHandshake: lastHandshake, // Assuming lastHandshake is not used
+  );
+}
+
 }
